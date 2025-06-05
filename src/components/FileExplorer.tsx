@@ -1,9 +1,9 @@
-
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FileNode } from '@/pages/Index';
-import { Folder, FolderOpen, File, Plus, Trash } from 'lucide-react';
+import { Folder, FolderOpen, File, Plus, Trash, FileText } from 'lucide-react';
+import { StructureImporter } from './StructureImporter';
 
 interface FileExplorerProps {
   fileTree: FileNode[];
@@ -22,6 +22,7 @@ export const FileExplorer = ({
   const [newItemName, setNewItemName] = useState('');
   const [newItemType, setNewItemType] = useState<'file' | 'folder'>('file');
   const [showNewItemInput, setShowNewItemInput] = useState(false);
+  const [showStructureImporter, setShowStructureImporter] = useState(false);
 
   const toggleFolder = (folderId: string) => {
     const newExpanded = new Set(expandedFolders);
@@ -62,6 +63,10 @@ export const FileExplorer = ({
     if (selectedFile?.id === itemId) {
       setSelectedFile(null);
     }
+  };
+
+  const handleStructureImport = (importedStructure: FileNode[]) => {
+    setFileTree([...fileTree, ...importedStructure]);
   };
 
   const renderFileNode = (node: FileNode, depth = 0) => {
@@ -119,17 +124,28 @@ export const FileExplorer = ({
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-semibold text-gray-900">Files</h2>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowNewItemInput(!showNewItemInput)}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          <div className="flex space-x-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowStructureImporter(!showStructureImporter)}
+              title="Import Structure"
+            >
+              <FileText className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowNewItemInput(!showNewItemInput)}
+              title="Add File/Folder"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {showNewItemInput && (
-          <div className="space-y-2">
+          <div className="space-y-2 mb-3">
             <div className="flex space-x-2">
               <Button
                 variant={newItemType === 'file' ? 'default' : 'outline'}
@@ -168,6 +184,13 @@ export const FileExplorer = ({
       <div className="flex-1 overflow-y-auto">
         {fileTree.map(node => renderFileNode(node))}
       </div>
+
+      {showStructureImporter && (
+        <StructureImporter 
+          onImport={handleStructureImport}
+          onClose={() => setShowStructureImporter(false)}
+        />
+      )}
     </div>
   );
 };
