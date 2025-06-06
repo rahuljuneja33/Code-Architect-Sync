@@ -27,6 +27,13 @@ interface HuggingFaceSpaceForm {
   license: string;
 }
 
+// UTF-8 safe Base64 encoding function
+const utf8ToBase64 = (str: string): string => {
+  return btoa(encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (match, p1) => {
+    return String.fromCharCode(parseInt(p1, 16));
+  }));
+};
+
 export const ExportPanel = ({ 
   projectName, 
   fileTree, 
@@ -292,7 +299,7 @@ ${JSON.stringify(fileTree, null, 2)}
 \`\`\`
 `;
 
-      // Upload README to the space
+      // Upload README to the space using the fixed UTF-8 to Base64 encoding
       await fetch(`https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main`, {
         method: 'POST',
         headers: {
@@ -302,7 +309,7 @@ ${JSON.stringify(fileTree, null, 2)}
           files: [
             {
               path: 'README.md',
-              content: btoa(readmeContent)
+              content: utf8ToBase64(readmeContent)
             }
           ],
           commit_message: 'Initial commit with project structure'
