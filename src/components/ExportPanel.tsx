@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -109,6 +108,31 @@ export const ExportPanel = ({
     });
   };
 
+  const convertFileTreeToGitHubFiles = (files: FileNode[], basePath = ''): Record<string, { content: string }> => {
+    const result: Record<string, { content: string }> = {};
+    
+    files.forEach(file => {
+      const fullPath = basePath ? `${basePath}/${file.name}` : file.name;
+      
+      if (file.type === 'file') {
+        result[fullPath] = {
+          content: file.content || `// ${file.name}\n// Auto-generated file`
+        };
+      } else if (file.type === 'folder' && file.children) {
+        // Add folder structure by creating files within it
+        const childFiles = convertFileTreeToGitHubFiles(file.children, fullPath);
+        Object.assign(result, childFiles);
+        
+        // If folder is empty, create a .gitkeep file
+        if (file.children.length === 0) {
+          result[`${fullPath}/.gitkeep`] = { content: '' };
+        }
+      }
+    });
+    
+    return result;
+  };
+
   const createGitHubRepo = async () => {
     if (!validateGitHubAuth() || !validateProjectStructure()) return;
     
@@ -124,13 +148,53 @@ export const ExportPanel = ({
     setIsCreatingRepo(true);
     
     try {
-      // Simulate API call to create GitHub repo
-      // In a real implementation, this would call the GitHub API
-      console.log('Creating GitHub repo with:', githubForm);
-      console.log('Files to upload:', fileTree);
+      // Create GitHub repository
+      const repoResponse = await fetch('https://api.github.com/user/repos', {
+        method: 'POST',
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: JSON.stringify({
+          name: githubForm.repoName,
+          description: githubForm.description,
+          private: githubForm.isPrivate,
+          auto_init: true
+        })
+      });
+
+      if (!repoResponse.ok) {
+        const errorData = await repoResponse.json();
+        throw new Error(errorData.message || 'Failed to create repository');
+      }
+
+      const repoData = await repoResponse.json();
+      console.log('Repository created:', repoData);
+
+      // Convert file tree to GitHub format
+      const files = convertFileTreeToGitHubFiles(fileTree);
       
-      // Simulate delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Upload files to the repository
+      for (const [filePath, fileData] of Object.entries(files)) {
+        try {
+          await fetch(`https://api.github.com/repos/${repoData.full_name}/contents/${filePath}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `token ${githubToken}`,
+              'Content-Type': 'application/json',
+              'Accept': 'application/vnd.github.v3+json'
+            },
+            body: JSON.stringify({
+              message: `Add ${filePath}`,
+              content: btoa(fileData.content), // Base64 encode content
+              branch: 'main'
+            })
+          });
+        } catch (fileError) {
+          console.warn(`Failed to upload ${filePath}:`, fileError);
+        }
+      }
       
       toast({
         title: "Repository Created Successfully",
@@ -139,9 +203,10 @@ export const ExportPanel = ({
       
       setIsGitHubDialogOpen(false);
     } catch (error) {
+      console.error('GitHub creation error:', error);
       toast({
         title: "GitHub Creation Failed",
-        description: "Failed to create repository. Please check your token and try again.",
+        description: error instanceof Error ? error.message : "Failed to create repository. Please check your token and try again.",
         variant: "destructive",
       });
     } finally {
@@ -164,13 +229,85 @@ export const ExportPanel = ({
     setIsCreatingSpace(true);
     
     try {
-      // Simulate API call to create Hugging Face Space
-      // In a real implementation, this would call the Hugging Face Hub API
-      console.log('Creating HF Space with:', hfForm);
-      console.log('Files to upload:', fileTree);
-      
-      // Simulate delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Get user info first
+      const userResponse = await fetch('https://huggingface.co/api/whoami-v2', {
+        headers: {
+          'Authorization': `Bearer ${huggingfaceToken}`
+        }
+      });
+
+      if (!userResponse.ok) {
+        throw new Error('Invalid Hugging Face token');
+      }
+
+      const userData = await userResponse.json();
+      const username = userData.name;
+
+      // Create Hugging Face Space
+      const spaceResponse = await fetch(`https://huggingface.co/api/repos/create`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${huggingfaceToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          type: 'space',
+          name: hfForm.spaceName,
+          private: false,
+          sdk: hfForm.sdk,
+          license: hfForm.license
+        })
+      });
+
+      if (!spaceResponse.ok) {
+        const errorData = await spaceResponse.json();
+        throw new Error(errorData.error || 'Failed to create space');
+      }
+
+      console.log('Hugging Face Space created');
+
+      // Create a simple README for the space
+      const readmeContent = `---
+title: ${hfForm.spaceName}
+emoji: 🚀
+colorFrom: blue
+colorTo: red
+sdk: ${hfForm.sdk}
+sdk_version: "4.44.0"
+app_file: app.py
+pinned: false
+license: ${hfForm.license}
+---
+
+# ${hfForm.spaceName}
+
+${hfForm.description}
+
+This space was created using File Structure Builder.
+
+## Project Structure
+
+\`\`\`
+${JSON.stringify(fileTree, null, 2)}
+\`\`\`
+`;
+
+      // Upload README to the space
+      await fetch(`https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${huggingfaceToken}`,
+        },
+        body: JSON.stringify({
+          files: [
+            {
+              path: 'README.md',
+              content: btoa(readmeContent)
+            }
+          ],
+          commit_message: 'Initial commit with project structure'
+        })
+      });
       
       toast({
         title: "Space Created Successfully",
@@ -179,9 +316,10 @@ export const ExportPanel = ({
       
       setIsHFDialogOpen(false);
     } catch (error) {
+      console.error('Hugging Face creation error:', error);
       toast({
         title: "Space Creation Failed",
-        description: "Failed to create Hugging Face Space. Please check your token and try again.",
+        description: error instanceof Error ? error.message : "Failed to create Hugging Face Space. Please check your token and try again.",
         variant: "destructive",
       });
     } finally {
