@@ -347,10 +347,49 @@ ${JSON.stringify(fileTree, null, 2)}
   const openInVSCode = () => {
     if (!validateProjectStructure()) return;
     
-    toast({
-      title: "VS Code Integration",
-      description: "This feature requires VS Code to be installed locally",
-    });
+    try {
+      // Try to open VS Code with a custom protocol
+      const vscodeUrl = `vscode://file/${encodeURIComponent(projectName)}`;
+      window.open(vscodeUrl, '_blank');
+      
+      toast({
+        title: "Opening in VS Code",
+        description: "If VS Code doesn't open, make sure it's installed and the protocol handler is enabled",
+      });
+    } catch (error) {
+      // Fallback: create a temporary file structure and download it
+      const createFileStructure = (nodes: FileNode[], basePath = ''): string => {
+        let structure = '';
+        nodes.forEach(node => {
+          const fullPath = basePath ? `${basePath}/${node.name}` : node.name;
+          if (node.type === 'file') {
+            structure += `File: ${fullPath}\n`;
+            structure += `Content:\n${node.content || '// Empty file'}\n\n---\n\n`;
+          } else if (node.type === 'folder' && node.children) {
+            structure += `Folder: ${fullPath}/\n`;
+            structure += createFileStructure(node.children, fullPath);
+          }
+        });
+        return structure;
+      };
+
+      const projectStructure = `Project: ${projectName}\n\n${createFileStructure(fileTree)}`;
+      const blob = new Blob([projectStructure], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName}-for-vscode.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      toast({
+        title: "VS Code Protocol Failed",
+        description: "Downloaded project structure as text file. You can manually create the files in VS Code.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
