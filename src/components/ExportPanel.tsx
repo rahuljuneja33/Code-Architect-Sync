@@ -95,7 +95,7 @@ export const ExportPanel = ({
     return true;
   };
 
-  const downloadAsJson = () => {
+  const downloadAsZip = () => {
     if (!validateProjectStructure()) return;
     
     const structure = JSON.stringify(fileTree, null, 2);
@@ -399,10 +399,10 @@ ${JSON.stringify(fileTree, null, 2)}
           <Button
             variant="outline"
             size="sm"
-            onClick={downloadAsJson}
+            onClick={downloadAsZip}
           >
             <Download className="h-4 w-4 mr-2" />
-            Download JSON
+            Download ZIP
           </Button>
           
           <Button
