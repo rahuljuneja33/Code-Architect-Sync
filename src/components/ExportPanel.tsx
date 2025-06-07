@@ -118,18 +118,109 @@ export const ExportPanel = ({
   const createProjectZip = () => {
     if (!validateProjectStructure()) return;
     
-    // Create a simple text-based project structure for download
-    const createFileStructure = (nodes: FileNode[], basePath = ''): string => {
-      let structure = '';
+    // Create a ZIP-like structure for VS Code integration
+    const createFilesForVSCode = (nodes: FileNode[], basePath = ''): { [key: string]: string } => {
+      const files: { [key: string]: string } = {};
+      
       nodes.forEach(node => {
         const fullPath = basePath ? `${basePath}/${node.name}` : node.name;
+        
         if (node.type === 'file') {
-          structure += `=== FILE: ${fullPath} ===\n`;
-          structure += `${node.content || '// Empty file'}\n\n`;
+          files[fullPath] = node.content || `// ${node.name}\n// Auto-generated file`;
         } else if (node.type === 'folder' && node.children) {
-          structure += `=== FOLDER: ${fullPath}/ ===\n`;
-          structure += createFileStructure(node.children, fullPath);
+          // Create files within the folder
+          const childFiles = createFilesForVSCode(node.children, fullPath);
+          Object.assign(files, childFiles);
+          
+          // If folder is empty, create a .gitkeep file
+          if (node.children.length === 0) {
+            files[`${fullPath}/.gitkeep`] = '';
+          }
         }
+      });
+      
+      return files;
+    };
+
+    try {
+      const files = createFilesForVSCode(fileTree);
+      
+      // Try to use the File System Access API to create files directly
+      if ('showDirectoryPicker' in window) {
+        createProjectWithFileSystemAPI(files);
+      } else {
+        // Fallback: Create a comprehensive project structure file
+        createProjectStructureFile(files);
+      }
+    } catch (error) {
+      console.error('Error creating project:', error);
+      // Fallback to the old method
+      createProjectStructureFile(createFilesForVSCode(fileTree));
+    }
+  };
+
+  const createProjectWithFileSystemAPI = async (files: { [key: string]: string }) => {
+    try {
+      // Request directory access
+      const directoryHandle = await (window as any).showDirectoryPicker({
+        mode: 'readwrite'
+      });
+
+      // Create project directory
+      const projectDirHandle = await directoryHandle.getDirectoryHandle(projectName, {
+        create: true
+      });
+
+      // Create all files and folders
+      for (const [filePath, content] of Object.entries(files)) {
+        const pathParts = filePath.split('/');
+        let currentDir = projectDirHandle;
+
+        // Create nested directories
+        for (let i = 0; i < pathParts.length - 1; i++) {
+          currentDir = await currentDir.getDirectoryHandle(pathParts[i], {
+            create: true
+          });
+        }
+
+        // Create the file
+        const fileName = pathParts[pathParts.length - 1];
+        const fileHandle = await currentDir.getFileHandle(fileName, {
+          create: true
+        });
+
+        const writable = await fileHandle.createWritable();
+        await writable.write(content);
+        await writable.close();
+      }
+
+      toast({
+        title: "Project Created Successfully",
+        description: `Project "${projectName}" has been created locally. Opening in VS Code...`,
+      });
+
+      // Try to open in VS Code
+      setTimeout(() => {
+        openInVSCode();
+      }, 1000);
+
+    } catch (error) {
+      console.error('File System API failed:', error);
+      toast({
+        title: "Direct File Creation Failed",
+        description: "Falling back to downloadable project structure",
+        variant: "destructive",
+      });
+      createProjectStructureFile(files);
+    }
+  };
+
+  const createProjectStructureFile = (files: { [key: string]: string }) => {
+    const createFileStructure = (): string => {
+      let structure = '';
+      Object.entries(files).forEach(([filePath, content]) => {
+        structure += `=== FILE: ${filePath} ===\n`;
+        structure += `${content}\n\n`;
       });
       return structure;
     };
@@ -141,12 +232,24 @@ INSTRUCTIONS:
 1. Create a new folder named "${projectName}"
 2. Create the files and folders as described below
 3. Copy the content for each file
-4. Open the folder in VS Code
+4. Open the folder in VS Code using: code ${projectName}
 
 PROJECT STRUCTURE:
-${createFileStructure(fileTree)}
+${createFileStructure()}
 
-=== END OF PROJECT ===`;
+=== END OF PROJECT ===
+
+VS CODE COMMANDS:
+1. mkdir ${projectName}
+2. cd ${projectName}
+${Object.keys(files).map(filePath => {
+  const dirs = filePath.split('/').slice(0, -1);
+  return dirs.length > 0 ? `3. mkdir -p ${dirs.join('/')}` : '';
+}).filter(Boolean).join('\n')}
+${Object.entries(files).map(([filePath, content], index) => 
+  `${index + 4}. echo '${content.replace(/'/g, "\\'")}' > ${filePath}`
+).join('\n')}
+${Object.keys(files).length + 4}. code .`;
 
     const blob = new Blob([projectStructure], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -383,6 +486,52 @@ ${JSON.stringify(fileTree, null, 2)}
     }
   };
 
+  const openInVSCode = () => {
+    if (!validateProjectStructure()) return;
+    
+    try {
+      // Try multiple VS Code integration methods
+      const methods = [
+        // Method 1: VS Code protocol handler
+        () => {
+          const vscodeUrl = `vscode://file/${encodeURIComponent(projectName)}`;
+          window.open(vscodeUrl, '_blank');
+        },
+        // Method 2: VS Code insiders protocol
+        () => {
+          const vscodeUrl = `vscode-insiders://file/${encodeURIComponent(projectName)}`;
+          window.open(vscodeUrl, '_blank');
+        },
+        // Method 3: Try to execute VS Code command (if available)
+        () => {
+          if ('navigator' in window && 'clipboard' in navigator) {
+            navigator.clipboard.writeText(`code ${projectName}`);
+            toast({
+              title: "Command Copied",
+              description: `"code ${projectName}" copied to clipboard. Run this in your terminal after creating the project.`,
+            });
+          }
+        }
+      ];
+
+      // Try the first method
+      methods[0]();
+      
+      toast({
+        title: "Opening in VS Code",
+        description: "If VS Code doesn't open automatically, use the 'Create for VS Code' button to download the project structure",
+      });
+      
+    } catch (error) {
+      console.error('VS Code integration failed:', error);
+      toast({
+        title: "VS Code Integration Failed",
+        description: "Please use the 'Create for VS Code' button to download the project structure manually",
+        variant: "destructive",
+      });
+    }
+  };
+
   const pushToGithub = () => {
     if (!validateGitHubAuth() || !validateProjectStructure()) return;
     setIsGitHubDialogOpen(true);
@@ -391,54 +540,6 @@ ${JSON.stringify(fileTree, null, 2)}
   const deployToHuggingFace = () => {
     if (!validateHuggingFaceAuth() || !validateProjectStructure()) return;
     setIsHFDialogOpen(true);
-  };
-
-  const openInVSCode = () => {
-    if (!validateProjectStructure()) return;
-    
-    try {
-      // Try to open VS Code with a custom protocol
-      const vscodeUrl = `vscode://file/${encodeURIComponent(projectName)}`;
-      window.open(vscodeUrl, '_blank');
-      
-      toast({
-        title: "Opening in VS Code",
-        description: "If VS Code doesn't open, make sure it's installed and the protocol handler is enabled",
-      });
-    } catch (error) {
-      // Fallback: create a temporary file structure and download it
-      const createFileStructure = (nodes: FileNode[], basePath = ''): string => {
-        let structure = '';
-        nodes.forEach(node => {
-          const fullPath = basePath ? `${basePath}/${node.name}` : node.name;
-          if (node.type === 'file') {
-            structure += `File: ${fullPath}\n`;
-            structure += `Content:\n${node.content || '// Empty file'}\n\n---\n\n`;
-          } else if (node.type === 'folder' && node.children) {
-            structure += `Folder: ${fullPath}/\n`;
-            structure += createFileStructure(node.children, fullPath);
-          }
-        });
-        return structure;
-      };
-
-      const projectStructure = `Project: ${projectName}\n\n${createFileStructure(fileTree)}`;
-      const blob = new Blob([projectStructure], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${projectName}-for-vscode.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      
-      toast({
-        title: "VS Code Protocol Failed",
-        description: "Downloaded project structure as text file. You can manually create the files in VS Code.",
-        variant: "destructive",
-      });
-    }
   };
 
   return (
