@@ -159,6 +159,21 @@ export const ExportPanel = ({
     return files;
   };
 
+  // Helper to ensure app.py is always present for HF Spaces (gradio/streamlit)
+  function ensureAppPy(hfFiles: { path: string; content: string }[], sdk: string): { path: string; content: string }[] {
+    if (sdk !== "gradio" && sdk !== "streamlit") return hfFiles;
+    // check for app.py or app.<ext>
+    if (!hfFiles.some(f => f.path === "app.py" || f.path.startsWith("app."))) {
+      return [...hfFiles, { path: "app.py", content: "# This file is required for running your Space\n" }];
+    }
+    return hfFiles;
+  }
+
+  // Add sleep for retries (ms)
+  function sleep(ms: number) {
+    return new Promise(res => setTimeout(res, ms));
+  }
+
   const createGitHubRepo = async () => {
     if (!validateGitHubAuth() || !validateProjectStructure()) return;
     
@@ -317,33 +332,46 @@ ${JSON.stringify(fileTree, null, 2)}
 `;
 
       // Gather all files for upload, including README.md
-      const hfFiles = [
+      let hfFiles = [
         { path: 'README.md', content: readmeContent },
         ...getFilesForHFUpload(fileTree)
       ];
+      hfFiles = ensureAppPy(hfFiles, hfForm.sdk);
 
-      // Upload each file using PUT (as required by HF Spaces API)
-      for (const file of hfFiles) {
-        const putResponse = await fetch(
-          `https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main/${encodeURIComponent(file.path)}`,
-          {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${huggingfaceToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              content: utf8ToBase64(file.content),
-              commit_title: `Add ${file.path}`,
-              commit_message: `Initial commit: add ${file.path}`,
-            }),
-          }
-        );
-
-        if (!putResponse.ok) {
-          const err = await putResponse.json().catch(() => ({}));
-          throw new Error(err.error || `Failed to upload: ${file.path}`);
+      // Helper to upload a single file with retry if 404
+      const uploadWithRetry = async (file, tries = 3) => {
+        const fileUrl = `https://huggingface.co/api/spaces/${username}/${hfForm.spaceName}/upload/main/${encodeURIComponent(file.path)}`;
+        let lastErr;
+        for (let t = 0; t < tries; t++) {
+          const res = await fetch(
+            fileUrl,
+            {
+              method: 'PUT',
+              headers: {
+                'Authorization': `Bearer ${huggingfaceToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                content: utf8ToBase64(file.content),
+                commit_title: `Add ${file.path}`,
+                commit_message: `Initial commit: add ${file.path}`,
+              }),
+            }
+          );
+          if (res.ok) return;
+          lastErr = res;
+          // retry for 404s, wait 2 sec
+          if (res.status === 404 && t < tries - 1) await sleep(2000);
+          else break;
         }
+        let errObj = {};
+        try { errObj = await lastErr.json(); } catch {}
+        throw new Error(errObj.error || `Failed to upload: ${file.path}. Status ${lastErr.status}`);
+      };
+
+      // Upload each file using the correct endpoint for Spaces
+      for (const file of hfFiles) {
+        await uploadWithRetry(file);
       }
 
       toast({
