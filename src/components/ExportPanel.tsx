@@ -366,7 +366,8 @@ ${JSON.stringify(fileTree, null, 2)}
         }
         let errObj = {};
         try { errObj = await lastErr.json(); } catch {}
-        throw new Error(errObj.error || `Failed to upload: ${file.path}. Status ${lastErr.status}`);
+        // FIX: Use "as any" to safely access possible error string
+        throw new Error((errObj as any)?.error || `Failed to upload: ${file.path}. Status ${lastErr.status}`);
       };
 
       // Upload each file using the correct endpoint for Spaces
