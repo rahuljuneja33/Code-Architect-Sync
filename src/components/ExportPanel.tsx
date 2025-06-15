@@ -338,10 +338,11 @@ ${JSON.stringify(fileTree, null, 2)}
       ];
       hfFiles = ensureAppPy(hfFiles, hfForm.sdk);
 
-      // Helper to upload a single file with retry if 404
-      const uploadWithRetry = async (file, tries = 3) => {
+      // Helper to upload a single file with increased retry window and better logging if 404
+      const uploadWithRetry = async (file, tries = 10) => {
         const fileUrl = `https://huggingface.co/api/spaces/${username}/${hfForm.spaceName}/upload/main/${encodeURIComponent(file.path)}`;
         let lastErr;
+        let delay = 2000;
         for (let t = 0; t < tries; t++) {
           const res = await fetch(
             fileUrl,
@@ -360,14 +361,24 @@ ${JSON.stringify(fileTree, null, 2)}
           );
           if (res.ok) return;
           lastErr = res;
-          // retry for 404s, wait 2 sec
-          if (res.status === 404 && t < tries - 1) await sleep(2000);
-          else break;
+          // More visible console on failure
+          console.warn(`Attempt ${t+1}/${tries}: Failed to upload ${file.path} - status ${res.status}`);
+          // retry for 404s, wait (exponential backoff capped at 5s)
+          if (res.status === 404 && t < tries - 1) {
+            await sleep(delay);
+            delay = Math.min(delay * 1.25, 5000);
+          } else {
+            break;
+          }
         }
         let errObj = {};
         try { errObj = await lastErr.json(); } catch {}
-        // FIX: Use "as any" to safely access possible error string
-        throw new Error((errObj as any)?.error || `Failed to upload: ${file.path}. Status ${lastErr.status}`);
+        throw new Error(
+          (errObj as any)?.error ||
+          `Failed to upload: ${file.path}. Status ${lastErr.status}. ` +
+          `If this is your FIRST upload to a new Space, it can take up to a minute for provisioning. ` +
+          `If this keeps failing, wait and try again.`
+        );
       };
 
       // Upload each file using the correct endpoint for Spaces
