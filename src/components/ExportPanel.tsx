@@ -140,6 +140,25 @@ export const ExportPanel = ({
     return result;
   };
 
+  // Recursively gather all files with their paths for HF upload
+  const getFilesForHFUpload = (nodes: FileNode[], basePath = ''): { path: string; content: string }[] => {
+    let files: { path: string; content: string }[] = [];
+    nodes.forEach(node => {
+      const fullPath = basePath ? `${basePath}/${node.name}` : node.name;
+      if (node.type === 'file') {
+        files.push({ path: fullPath, content: node.content || `// ${node.name}\n// Auto-generated file` });
+      } else if (node.type === 'folder') {
+        if (node.children && node.children.length > 0) {
+          files = files.concat(getFilesForHFUpload(node.children, fullPath));
+        } else {
+          // Empty folder: create a .gitkeep file
+          files.push({ path: `${fullPath}/.gitkeep`, content: '' });
+        }
+      }
+    });
+    return files;
+  };
+
   const createGitHubRepo = async () => {
     if (!validateGitHubAuth() || !validateProjectStructure()) return;
     
@@ -271,9 +290,7 @@ export const ExportPanel = ({
         throw new Error(errorData.error || 'Failed to create space');
       }
 
-      console.log('Hugging Face Space created');
-
-      // Create a simple README for the space
+      // Build README
       const readmeContent = `---
 title: ${hfForm.spaceName}
 emoji: 🚀
@@ -299,26 +316,36 @@ ${JSON.stringify(fileTree, null, 2)}
 \`\`\`
 `;
 
-      // Upload README to the space using the fixed UTF-8 to Base64 encoding
-      await fetch(`https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main`, {
+      // 1. Gather all files for upload, include README.md
+      const hfFiles = [
+        { path: 'README.md', content: readmeContent },
+        ...getFilesForHFUpload(fileTree)
+      ];
+
+      // 2. Upload files in one request using the batch upload API endpoint
+      // (It is much faster and less rate-limited than uploading one by one.)
+      const uploadResponse = await fetch(`https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${huggingfaceToken}`,
         },
         body: JSON.stringify({
-          files: [
-            {
-              path: 'README.md',
-              content: utf8ToBase64(readmeContent)
-            }
-          ],
-          commit_message: 'Initial commit with project structure'
+          files: hfFiles.map(f => ({
+            path: f.path,
+            content: utf8ToBase64(f.content)
+          })),
+          commit_message: 'Initial commit with full project structure'
         })
       });
-      
+
+      if (!uploadResponse.ok) {
+        const errorPayload = await uploadResponse.json();
+        throw new Error(errorPayload.error || 'Failed to upload files.');
+      }
+
       toast({
-        title: "Space Created Successfully",
-        description: `Hugging Face Space "${hfForm.spaceName}" has been created and deployed`,
+        title: "Space Created & Files Synced!",
+        description: `All files/folders have been uploaded to Hugging Face Space "${hfForm.spaceName}".`,
       });
       
       setIsHFDialogOpen(false);
