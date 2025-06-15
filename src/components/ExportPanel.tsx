@@ -316,31 +316,34 @@ ${JSON.stringify(fileTree, null, 2)}
 \`\`\`
 `;
 
-      // 1. Gather all files for upload, include README.md
+      // Gather all files for upload, including README.md
       const hfFiles = [
         { path: 'README.md', content: readmeContent },
         ...getFilesForHFUpload(fileTree)
       ];
 
-      // 2. Upload files in one request using the batch upload API endpoint
-      // (It is much faster and less rate-limited than uploading one by one.)
-      const uploadResponse = await fetch(`https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${huggingfaceToken}`,
-        },
-        body: JSON.stringify({
-          files: hfFiles.map(f => ({
-            path: f.path,
-            content: utf8ToBase64(f.content)
-          })),
-          commit_message: 'Initial commit with full project structure'
-        })
-      });
+      // Upload each file using PUT (as required by HF Spaces API)
+      for (const file of hfFiles) {
+        const putResponse = await fetch(
+          `https://huggingface.co/api/repos/${username}/${hfForm.spaceName}/upload/main/${encodeURIComponent(file.path)}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${huggingfaceToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              content: utf8ToBase64(file.content),
+              commit_title: `Add ${file.path}`,
+              commit_message: `Initial commit: add ${file.path}`,
+            }),
+          }
+        );
 
-      if (!uploadResponse.ok) {
-        const errorPayload = await uploadResponse.json();
-        throw new Error(errorPayload.error || 'Failed to upload files.');
+        if (!putResponse.ok) {
+          const err = await putResponse.json().catch(() => ({}));
+          throw new Error(err.error || `Failed to upload: ${file.path}`);
+        }
       }
 
       toast({
